@@ -48,8 +48,10 @@ import static org.apache.commons.lang3.StringUtils.isNotEmpty;
 public class CachingDirectoryLister
         implements DirectoryLister, TableInvalidationCallback
 {
+	
     //TODO use a cache key based on Path & SchemaTableName and iterate over the cache keys
     // to deal more efficiently with cache invalidation scenarios for partitioned tables.
+	float timeoutMs = 1000; //Default Value 
     private final Cache<Path, ValueHolder> cache;
     private final List<SchemaTablePrefix> tablePrefixes;
 
@@ -87,9 +89,8 @@ public class CachingDirectoryLister
         }
         return new SchemaTablePrefix(schema, table);
     }
-
-    @Override
-    public RemoteIterator<LocatedFileStatus> list(FileSystem fs, Table table, Path path)
+    
+    public RemoteIterator<LocatedFileStatus> listHelper(FileSystem fs, Table table, Path path)
             throws IOException
     {
         if (!isCacheEnabledFor(table.getSchemaTableName())) {
@@ -107,6 +108,32 @@ public class CachingDirectoryLister
             return simpleRemoteIterator(cachedValueHolder.getFiles().get());
         }
         return cachingRemoteIterator(cachedValueHolder, fs.listLocatedStatus(path), path);
+    }
+
+
+    @Override
+    public RemoteIterator<LocatedFileStatus> list(FileSystem fs, Table table, Path path)
+            throws IOException
+    {
+        Future<RemoteIterator<LocatedFileStatus>> future = timeoutExecutorService.submit(() -> 
+        	listHelper(FileSystem fs, Table table, Path path));
+        try {
+            return future.get(this.timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            //something interrupted, probably your service is shutting down
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        } catch (ExecutionException e) {
+            //error happened while executing conjureResult() - handle it
+            if (e.getCause() instanceof MyException) {
+                throw (MyException)e.getCause();
+            } else {
+                throw new RuntimeException(e);
+            }
+        } catch (TimeoutException e) {
+            //timeout expired, you may want to do something else here
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
