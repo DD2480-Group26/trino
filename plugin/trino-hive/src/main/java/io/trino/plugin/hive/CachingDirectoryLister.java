@@ -51,7 +51,7 @@ public class CachingDirectoryLister
 	
     //TODO use a cache key based on Path & SchemaTableName and iterate over the cache keys
     // to deal more efficiently with cache invalidation scenarios for partitioned tables.
-	float timeoutMs = 1000; //Default Value 
+	float timeoutMs = 10000; //Default Value: 10s
     private final Cache<Path, ValueHolder> cache;
     private final List<SchemaTablePrefix> tablePrefixes;
 
@@ -90,7 +90,33 @@ public class CachingDirectoryLister
         return new SchemaTablePrefix(schema, table);
     }
     
-    public RemoteIterator<LocatedFileStatus> listHelper(FileSystem fs, Table table, Path path)
+    @Override
+    public RemoteIterator<LocatedFileStatus> list(FileSystem fs, Table table, Path path) throws IOException {
+        ExecutorService timeoutExecutorService = Executors.newSingleThreadExecutor();
+        Future<RemoteIterator<LocatedFileStatus>> future = timeoutExecutorService.submit(() -> listExecuter(fs, table, path));
+        try {
+            return future.get(this.timeoutsMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            // something interrupted, probably your service is shutting down
+            Thread.currentThread().interrupt();
+            timeoutExecutorService.shutdownNow();
+            throw new RuntimeException(e);
+        } catch (ExecutionException e) {
+            // error happened while executing listExecuter() - shut down this method
+            System.out.println(e);
+            Thread.currentThread().interrupt();
+            timeoutExecutorService.shutdownNow();
+            throw new RuntimeException(e);
+        } catch (TimeoutException e) {
+            // timeout expired, stop this method from running and print an error message
+            System.out.println(e);
+            Thread.currentThread().interrupt();
+            timeoutExecutorService.shutdownNow();
+            throw new RuntimeException(e);
+        }
+    }
+
+    public RemoteIterator<LocatedFileStatus> listExecuter(FileSystem fs, Table table, Path path)
             throws IOException
     {
         if (!isCacheEnabledFor(table.getSchemaTableName())) {
@@ -108,32 +134,6 @@ public class CachingDirectoryLister
             return simpleRemoteIterator(cachedValueHolder.getFiles().get());
         }
         return cachingRemoteIterator(cachedValueHolder, fs.listLocatedStatus(path), path);
-    }
-
-
-    @Override
-    public RemoteIterator<LocatedFileStatus> list(FileSystem fs, Table table, Path path)
-            throws IOException
-    {
-        Future<RemoteIterator<LocatedFileStatus>> future = timeoutExecutorService.submit(() -> 
-        	listHelper(FileSystem fs, Table table, Path path));
-        try {
-            return future.get(this.timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            //something interrupted, probably your service is shutting down
-            Thread.currentThread().interrupt();
-            throw new RuntimeException(e);
-        } catch (ExecutionException e) {
-            //error happened while executing conjureResult() - handle it
-            if (e.getCause() instanceof MyException) {
-                throw (MyException)e.getCause();
-            } else {
-                throw new RuntimeException(e);
-            }
-        } catch (TimeoutException e) {
-            //timeout expired, you may want to do something else here
-            throw new RuntimeException(e);
-        }
     }
 
     @Override
