@@ -38,7 +38,11 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
@@ -51,9 +55,10 @@ public class CachingDirectoryLister
 	
     //TODO use a cache key based on Path & SchemaTableName and iterate over the cache keys
     // to deal more efficiently with cache invalidation scenarios for partitioned tables.
-	float timeoutMs = 10000; //Default Value: 10s
+	private final long timeoutMs = 10000; //Default Value: 10s
     private final Cache<Path, ValueHolder> cache;
     private final List<SchemaTablePrefix> tablePrefixes;
+
 
     @Inject
     public CachingDirectoryLister(HiveConfig hiveClientConfig)
@@ -95,7 +100,7 @@ public class CachingDirectoryLister
         ExecutorService timeoutExecutorService = Executors.newSingleThreadExecutor();
         Future<RemoteIterator<LocatedFileStatus>> future = timeoutExecutorService.submit(() -> listExecuter(fs, table, path));
         try {
-            return future.get(this.timeoutsMs, TimeUnit.MILLISECONDS);
+            return future.get(this.timeoutMs, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             // something interrupted, probably your service is shutting down
             Thread.currentThread().interrupt();
