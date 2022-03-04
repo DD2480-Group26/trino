@@ -44,6 +44,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
 import static org.apache.commons.lang3.StringUtils.isNotEmpty;
+import static java.util.concurrent.TimeUnit.MINUTES;
 
 public class CachingDirectoryLister
         implements DirectoryLister, TableInvalidationCallback
@@ -52,11 +53,13 @@ public class CachingDirectoryLister
     // to deal more efficiently with cache invalidation scenarios for partitioned tables.
     private final Cache<Path, ValueHolder> cache;
     private final List<SchemaTablePrefix> tablePrefixes;
+    private Duration fileListingTimeout = new Duration(1, MINUTES);
 
     @Inject
     public CachingDirectoryLister(HiveConfig hiveClientConfig)
     {
         this(hiveClientConfig.getFileStatusCacheExpireAfterWrite(), hiveClientConfig.getFileStatusCacheMaxSize(), hiveClientConfig.getFileStatusCacheTables());
+        this.fileListingTimeout = hiveClientConfig.getFileListingTimeout();
     }
 
     public CachingDirectoryLister(Duration expireAfterWrite, long maxSize, List<String> tables)
