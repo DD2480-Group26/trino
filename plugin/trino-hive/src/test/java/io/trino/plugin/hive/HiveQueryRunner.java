@@ -248,6 +248,7 @@ public final class HiveQueryRunner
                         .put("hive.max-split-size", "10kB") // so that each bucket has multiple splits
                         .put("hive.storage-format", "TEXTFILE") // so that there's no minimum split size for the file
                         .put("hive.compression-codec", "NONE") // so that the file is splittable
+                        .put("hive.file-listing-timeout", "2.00m")
                         .buildOrThrow();
                 queryRunner.createCatalog(HIVE_CATALOG, "hive", hiveProperties);
                 queryRunner.createCatalog(HIVE_BUCKETED_CATALOG, "hive", hiveBucketedProperties);
