@@ -55,7 +55,7 @@ public class CachingDirectoryLister
 	
     //TODO use a cache key based on Path & SchemaTableName and iterate over the cache keys
     // to deal more efficiently with cache invalidation scenarios for partitioned tables.
-	private final long timeoutMs = 10000; //Default Value: 10s
+	private long timeoutMs = 10000; //Default Value: 10s
     private final Cache<Path, ValueHolder> cache;
     private final List<SchemaTablePrefix> tablePrefixes;
 
@@ -211,6 +211,14 @@ public class CachingDirectoryLister
                 return iterator.next();
             }
         };
+    }
+
+    public long getTimeoutMs() {
+        return timeoutMs;
+    }
+
+    public void setTimeoutMs(long timeoutMs) {
+        this.timeoutMs = timeoutMs;
     }
 
     @Managed
