@@ -48,6 +48,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
 import static org.apache.commons.lang3.StringUtils.isNotEmpty;
+import static java.util.concurrent.TimeUnit.MINUTES;
 
 public class CachingDirectoryLister
         implements DirectoryLister, TableInvalidationCallback
@@ -55,7 +56,7 @@ public class CachingDirectoryLister
 	
     //TODO use a cache key based on Path & SchemaTableName and iterate over the cache keys
     // to deal more efficiently with cache invalidation scenarios for partitioned tables.
-	private long timeoutMs = 10000; //Default Value: 10s
+	private Duration fileListingTimeout = new Duration(1, MINUTES);
     private final Cache<Path, ValueHolder> cache;
     private final List<SchemaTablePrefix> tablePrefixes;
 
@@ -95,35 +96,60 @@ public class CachingDirectoryLister
         return new SchemaTablePrefix(schema, table);
     }
     
+    /**
+     * Execute and return the result from {@link #listExecuter()} incorporated with a timer. 
+     * If listExecuter does not end within a certain amount of time (defined by 
+     * the field variable fileListingTimeout) the Thread running listExecuter will 
+     * be interrupted and a RuntimeException will be thrown. 
+     * 
+     * @param fs FileSystem, see: {@link org.apache.hadoop.fs.FileSystem}
+     * @param table Table, see: {@link io.trino.plugin.hive.metastore.Table}
+     * @param path  Path, see: {@link org.apache.hadoop.fs.Path}
+     * @return an iterator that runs over FileStatus-Object that inclues a file's block 
+     * locations
+     * @throws IOException
+     * @throws RuntimeException
+     */
     @Override
-    public RemoteIterator<LocatedFileStatus> list(FileSystem fs, Table table, Path path) throws IOException {
+    public RemoteIterator<LocatedFileStatus> list(FileSystem fs, Table table, Path path)
+            throws IOException, RuntimeException {
         ExecutorService timeoutExecutorService = Executors.newSingleThreadExecutor();
-        Future<RemoteIterator<LocatedFileStatus>> future = timeoutExecutorService.submit(() -> listExecuter(fs, table, path));
+        Future<RemoteIterator<LocatedFileStatus>> future = timeoutExecutorService
+                .submit(() -> listExecuter(fs, table, path));
         try {
-            return future.get(this.timeoutMs, TimeUnit.MILLISECONDS);
+            return future.get(fileListingTimeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             // something interrupted, probably your service is shutting down
-            Thread.currentThread().interrupt();
             timeoutExecutorService.shutdownNow();
             throw new RuntimeException(e);
         } catch (ExecutionException e) {
             // error happened while executing listExecuter() - shut down this method
             System.out.println(e);
-            Thread.currentThread().interrupt();
             timeoutExecutorService.shutdownNow();
             throw new RuntimeException(e);
         } catch (TimeoutException e) {
             // timeout expired, stop this method from running and print an error message
+            future.cancel(true);
             System.out.println(e);
-            Thread.currentThread().interrupt();
-            timeoutExecutorService.shutdownNow();
             throw new RuntimeException(e);
+        } finally {
+            timeoutExecutorService.shutdownNow();
         }
     }
 
+    /**
+     * return an iterator over a collection whose elements need to be fetched 
+     * remotely. The elements are FileStatus-objects that includes a file's block 
+     * locations. 
+     * @param fs FileSystem, see: {@link org.apache.hadoop.fs.FileSystem}
+     * @param table Table, see: {@link io.trino.plugin.hive.metastore.Table}
+     * @param path  Path, see: {@link org.apache.hadoop.fs.Path}
+     * @return an iterator that runs over FileStatus-Object that inclues a file's block 
+     * locations
+     * @throws IOException
+     */
     public RemoteIterator<LocatedFileStatus> listExecuter(FileSystem fs, Table table, Path path)
-            throws IOException
-    {
+            throws IOException {
         if (!isCacheEnabledFor(table.getSchemaTableName())) {
             return fs.listLocatedStatus(path);
         }
@@ -131,8 +157,7 @@ public class CachingDirectoryLister
         ValueHolder cachedValueHolder;
         try {
             cachedValueHolder = cache.get(path, ValueHolder::new);
-        }
-        catch (ExecutionException e) {
+        } catch (ExecutionException e) {
             throw new RuntimeException(e); // cannot happen
         }
         if (cachedValueHolder.getFiles().isPresent()) {
@@ -213,12 +238,8 @@ public class CachingDirectoryLister
         };
     }
 
-    public long getTimeoutMs() {
-        return timeoutMs;
-    }
-
-    public void setTimeoutMs(long timeoutMs) {
-        this.timeoutMs = timeoutMs;
+    public Duration getFileListingTimeout() {
+        return fileListingTimeout;
     }
 
     @Managed
