@@ -362,7 +362,7 @@ public final class DynamicFilters
     {
         private Function() {}
 
-        private static final String NAME = "$internal$dynamic_filter_function";
+        static final String NAME = "$internal$dynamic_filter_function";
 
         @TypeParameter("T")
         @SqlType(BOOLEAN)
@@ -402,7 +402,7 @@ public final class DynamicFilters
     {
         private NullableFunction() {}
 
-        private static final String NAME = "$internal$dynamic_filter_nullable_function";
+        static final String NAME = "$internal$dynamic_filter_nullable_function";
 
         @TypeParameter("T")
         @SqlType(BOOLEAN)
