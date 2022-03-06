@@ -13,24 +13,11 @@
  */
 package io.trino.plugin.hive;
 
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.cache.Cache;
-import com.google.common.cache.Weigher;
-import com.google.common.collect.ImmutableList;
-import io.airlift.units.Duration;
-import io.trino.collect.cache.EvictableCacheBuilder;
-import io.trino.plugin.hive.metastore.Partition;
-import io.trino.plugin.hive.metastore.Storage;
-import io.trino.plugin.hive.metastore.Table;
-import io.trino.spi.connector.SchemaTableName;
-import io.trino.spi.connector.SchemaTablePrefix;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.LocatedFileStatus;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.RemoteIterator;
-import org.weakref.jmx.Managed;
-
-import javax.inject.Inject;
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.MINUTES;
+import static org.apache.commons.lang3.StringUtils.isNotEmpty;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -44,11 +31,26 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.collect.ImmutableList.toImmutableList;
-import static java.util.Objects.requireNonNull;
-import static org.apache.commons.lang3.StringUtils.isNotEmpty;
-import static java.util.concurrent.TimeUnit.MINUTES;
+import javax.inject.Inject;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.cache.Cache;
+import com.google.common.cache.Weigher;
+import com.google.common.collect.ImmutableList;
+
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.LocatedFileStatus;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.RemoteIterator;
+import org.weakref.jmx.Managed;
+
+import io.airlift.units.Duration;
+import io.trino.collect.cache.EvictableCacheBuilder;
+import io.trino.plugin.hive.metastore.Partition;
+import io.trino.plugin.hive.metastore.Storage;
+import io.trino.plugin.hive.metastore.Table;
+import io.trino.spi.connector.SchemaTableName;
+import io.trino.spi.connector.SchemaTablePrefix;
 
 public class CachingDirectoryLister
         implements DirectoryLister, TableInvalidationCallback
@@ -119,20 +121,20 @@ public class CachingDirectoryLister
         try {
             return future.get(fileListingTimeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
-            // something interrupted, probably your service is shutting down
-            timeoutExecutorService.shutdownNow();
+            // the thread is interrupted, throw a RuntimeException
+            System.err.println(e);
             throw new RuntimeException(e);
         } catch (ExecutionException e) {
-            // error happened while executing listExecuter() - shut down this method
-            System.out.println(e);
-            timeoutExecutorService.shutdownNow();
+            // error happened while executing listExecuter(), throw a RuntimeException
+            System.err.println(e);
             throw new RuntimeException(e);
         } catch (TimeoutException e) {
             // timeout expired, stop this method from running and print an error message
             future.cancel(true);
-            System.out.println(e);
+            System.err.println(e);
             throw new RuntimeException(e);
         } finally {
+            // shutdown the executor
             timeoutExecutorService.shutdownNow();
         }
     }
