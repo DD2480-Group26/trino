@@ -981,7 +981,7 @@ public class GlueHiveMetastore
                         BatchCreatePartitionResult result = future.get();
                         propagatePartitionErrorToTrinoException(databaseName, tableName, result.getErrors());
                     }
-                    catch (InterruptedException e) {
+                    catch (InterruptedException |ExecutionException e) {
                         Thread.currentThread().interrupt();
                         throw new TrinoException(HIVE_METASTORE_ERROR, e);
                     }
@@ -997,7 +997,7 @@ public class GlueHiveMetastore
                 return null;
             });
         }
-        catch (AmazonServiceException | ExecutionException e) {
+        catch (AmazonServiceException e) {
             throw new TrinoException(HIVE_METASTORE_ERROR, e);
         }
     }

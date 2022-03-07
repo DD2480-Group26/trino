@@ -53,6 +53,25 @@ import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 
 
+import javax.inject.Inject;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.util.Objects.requireNonNull;
+import static org.apache.commons.lang3.StringUtils.isNotEmpty;
+import static java.util.concurrent.TimeUnit.MINUTES;
 
 public class CachingDirectoryLister
         implements DirectoryLister, TableInvalidationCallback
@@ -101,6 +120,7 @@ public class CachingDirectoryLister
         return new SchemaTablePrefix(schema, table);
     }
 
+
     /**
      * Execute and return the result from {@link #listExecuter()} incorporated with a timer.
      * If listExecuter does not end within a certain amount of time (defined by
@@ -134,6 +154,7 @@ public class CachingDirectoryLister
         } catch (TimeoutException e) {
             // timeout expired, stop this method from running and print an error message
             future.cancel(true);
+
             System.err.println(e);
             throw new RuntimeException(e);
         } finally {
@@ -143,6 +164,7 @@ public class CachingDirectoryLister
     }
 
     /**
+
      * return an iterator over a collection whose elements need to be fetched
      * remotely. The elements are FileStatus-objects that includes a file's block
      * locations.

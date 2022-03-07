@@ -21,11 +21,17 @@ import io.trino.plugin.hive.metastore.file.FileHiveMetastore;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.MaterializedRow;
 import io.trino.testing.QueryRunner;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.conf.Configuration;
+import org.junit.Rule;
+import org.junit.rules.Timeout;
 import org.testng.annotations.Test;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.concurrent.TimeUnit;
 
 import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
@@ -34,6 +40,7 @@ import static io.trino.plugin.hive.metastore.file.FileHiveMetastore.createTestin
 import static java.lang.String.format;
 import static java.nio.file.Files.createTempDirectory;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.testng.AssertJUnit.fail;
 
 // some tests may invalidate the whole cache affecting therefore other concurrent tests
 @Test(singleThreaded = true)
@@ -42,6 +49,9 @@ public class TestCachingDirectoryLister
 {
     private CachingDirectoryLister cachingDirectoryLister;
     private FileHiveMetastore fileHiveMetastore;
+
+    @Rule
+    public Timeout timeout = new Timeout(1, TimeUnit.MINUTES);
 
     @Override
     protected QueryRunner createQueryRunner()
@@ -58,6 +68,44 @@ public class TestCachingDirectoryLister
                 .setMetastore(distributedQueryRunner -> fileHiveMetastore = createTestingFileHiveMetastore(temporaryMetastoreDirectory.toFile()))
                 .setCachingDirectoryLister(cachingDirectoryLister)
                 .build();
+    }
+
+    private Table getTable(String schemaName, String tableName)
+    {
+        return fileHiveMetastore.getTable(schemaName, tableName)
+                .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", schemaName, tableName)));
+    }
+
+    private void sleep(long milliseconds) {
+        try {
+            Thread.sleep(milliseconds);
+        } catch (InterruptedException e) {
+            fail();
+        }
+    }
+
+    @Test(timeOut = 500)
+    public void testList_shouldNotTimeout() throws IOException {
+        sleep(500);
+
+        Configuration conf = new Configuration();
+        FileSystem fs = FileSystem.get(conf);
+        Table table = getTable(TPCH_SCHEMA,"partial_cache_invalidation_table1");
+        Path path = createTempDirectory(null);
+
+       cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
+    }
+
+    @Test(timeOut = 1500)
+    public void testList_shouldTimeout() throws IOException {
+        sleep(1500);
+
+        Configuration conf = new Configuration();
+        FileSystem fs = FileSystem.get(conf);
+        Table table = getTable(TPCH_SCHEMA,"partial_cache_invalidation_table1");
+        Path path = createTempDirectory(null);
+
+        cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
     }
 
     @Test
