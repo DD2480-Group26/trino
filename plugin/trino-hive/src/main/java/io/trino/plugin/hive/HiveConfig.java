@@ -166,6 +166,8 @@ public class HiveConfig
     private boolean sizeBasedSplitWeightsEnabled = true;
     private double minimumAssignedSplitWeight = 0.05;
 
+    private Duration fileListingTimeout = new Duration(1, MINUTES);
+
     public boolean isSingleStatementWritesOnly()
     {
         return singleStatementWritesOnly;
@@ -1165,4 +1167,18 @@ public class HiveConfig
     {
         return minimumAssignedSplitWeight;
     }
+
+    @Config("hive.file-listing-timeout")
+    @ConfigDescription("Maximum time that listening cached files could take before throwing error.")
+    public HiveConfig setFileListingTimeout(Duration fileListingTimeout)
+    {
+        this.fileListingTimeout =fileListingTimeout;
+        return this;
+    }
+
+    public Duration getFileListingTimeout()
+    {
+        return fileListingTimeout;
+    }
+
 }

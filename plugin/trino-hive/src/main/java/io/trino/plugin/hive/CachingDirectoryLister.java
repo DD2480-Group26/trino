@@ -13,10 +13,37 @@
  */
 package io.trino.plugin.hive;
 
+import static com.google.common.base.Preconditions.checkArgument;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.MINUTES;
+import static org.apache.commons.lang3.StringUtils.isNotEmpty;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import javax.inject.Inject;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.Cache;
 import com.google.common.cache.Weigher;
 import com.google.common.collect.ImmutableList;
+
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.LocatedFileStatus;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.RemoteIterator;
+import org.weakref.jmx.Managed;
+
 import io.airlift.units.Duration;
 import io.trino.collect.cache.EvictableCacheBuilder;
 import io.trino.plugin.hive.metastore.Partition;
@@ -24,11 +51,7 @@ import io.trino.plugin.hive.metastore.Storage;
 import io.trino.plugin.hive.metastore.Table;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.LocatedFileStatus;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.RemoteIterator;
-import org.weakref.jmx.Managed;
+
 
 import javax.inject.Inject;
 
@@ -53,7 +76,7 @@ import static java.util.concurrent.TimeUnit.MINUTES;
 public class CachingDirectoryLister
         implements DirectoryLister, TableInvalidationCallback
 {
-	
+
     //TODO use a cache key based on Path & SchemaTableName and iterate over the cache keys
     // to deal more efficiently with cache invalidation scenarios for partitioned tables.
 	private Duration fileListingTimeout = new Duration(1, MINUTES);
@@ -65,6 +88,7 @@ public class CachingDirectoryLister
     public CachingDirectoryLister(HiveConfig hiveClientConfig)
     {
         this(hiveClientConfig.getFileStatusCacheExpireAfterWrite(), hiveClientConfig.getFileStatusCacheMaxSize(), hiveClientConfig.getFileStatusCacheTables());
+        this.fileListingTimeout = hiveClientConfig.getFileListingTimeout();
     }
 
     public CachingDirectoryLister(Duration expireAfterWrite, long maxSize, List<String> tables)
@@ -95,17 +119,18 @@ public class CachingDirectoryLister
         }
         return new SchemaTablePrefix(schema, table);
     }
-    
+
+
     /**
-     * Execute and return the result from {@link #listExecuter()} incorporated with a timer. 
-     * If listExecuter does not end within a certain amount of time (defined by 
-     * the field variable fileListingTimeout) the Thread running listExecuter will 
-     * be interrupted and a RuntimeException will be thrown. 
-     * 
+     * Execute and return the result from {@link #listExecuter()} incorporated with a timer.
+     * If listExecuter does not end within a certain amount of time (defined by
+     * the field variable fileListingTimeout) the Thread running listExecuter will
+     * be interrupted and a RuntimeException will be thrown.
+     *
      * @param fs FileSystem, see: {@link org.apache.hadoop.fs.FileSystem}
      * @param table Table, see: {@link io.trino.plugin.hive.metastore.Table}
      * @param path  Path, see: {@link org.apache.hadoop.fs.Path}
-     * @return an iterator that runs over FileStatus-Object that inclues a file's block 
+     * @return an iterator that runs over FileStatus-Object that inclues a file's block
      * locations
      * @throws IOException
      * @throws RuntimeException
@@ -117,34 +142,36 @@ public class CachingDirectoryLister
         Future<RemoteIterator<LocatedFileStatus>> future = timeoutExecutorService
                 .submit(() -> listExecuter(fs, table, path));
         try {
-            return future.get(fileListingTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            return future.get(getFileListingTimeout().toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
-            // something interrupted, probably your service is shutting down
-            timeoutExecutorService.shutdownNow();
+            // the thread is interrupted, throw a RuntimeException
+            System.err.println(e);
             throw new RuntimeException(e);
         } catch (ExecutionException e) {
-            // error happened while executing listExecuter() - shut down this method
-            System.out.println(e);
-            timeoutExecutorService.shutdownNow();
+            // error happened while executing listExecuter(), throw a RuntimeException
+            System.err.println(e);
             throw new RuntimeException(e);
         } catch (TimeoutException e) {
             // timeout expired, stop this method from running and print an error message
             future.cancel(true);
-            System.out.println(e);
+
+            System.err.println(e);
             throw new RuntimeException(e);
         } finally {
+            // shutdown the executor
             timeoutExecutorService.shutdownNow();
         }
     }
 
     /**
-     * return an iterator over a collection whose elements need to be fetched 
-     * remotely. The elements are FileStatus-objects that includes a file's block 
-     * locations. 
+
+     * return an iterator over a collection whose elements need to be fetched
+     * remotely. The elements are FileStatus-objects that includes a file's block
+     * locations.
      * @param fs FileSystem, see: {@link org.apache.hadoop.fs.FileSystem}
      * @param table Table, see: {@link io.trino.plugin.hive.metastore.Table}
      * @param path  Path, see: {@link org.apache.hadoop.fs.Path}
-     * @return an iterator that runs over FileStatus-Object that inclues a file's block 
+     * @return an iterator that runs over FileStatus-Object that inclues a file's block
      * locations
      * @throws IOException
      */
