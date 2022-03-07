@@ -52,10 +52,12 @@ import io.trino.plugin.hive.metastore.Table;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
 
+
+
 public class CachingDirectoryLister
         implements DirectoryLister, TableInvalidationCallback
 {
-	
+
     //TODO use a cache key based on Path & SchemaTableName and iterate over the cache keys
     // to deal more efficiently with cache invalidation scenarios for partitioned tables.
 	private Duration fileListingTimeout = new Duration(1, MINUTES);
@@ -67,6 +69,7 @@ public class CachingDirectoryLister
     public CachingDirectoryLister(HiveConfig hiveClientConfig)
     {
         this(hiveClientConfig.getFileStatusCacheExpireAfterWrite(), hiveClientConfig.getFileStatusCacheMaxSize(), hiveClientConfig.getFileStatusCacheTables());
+        this.fileListingTimeout = hiveClientConfig.getFileListingTimeout();
     }
 
     public CachingDirectoryLister(Duration expireAfterWrite, long maxSize, List<String> tables)
@@ -97,17 +100,17 @@ public class CachingDirectoryLister
         }
         return new SchemaTablePrefix(schema, table);
     }
-    
+
     /**
-     * Execute and return the result from {@link #listExecuter()} incorporated with a timer. 
-     * If listExecuter does not end within a certain amount of time (defined by 
-     * the field variable fileListingTimeout) the Thread running listExecuter will 
-     * be interrupted and a RuntimeException will be thrown. 
-     * 
+     * Execute and return the result from {@link #listExecuter()} incorporated with a timer.
+     * If listExecuter does not end within a certain amount of time (defined by
+     * the field variable fileListingTimeout) the Thread running listExecuter will
+     * be interrupted and a RuntimeException will be thrown.
+     *
      * @param fs FileSystem, see: {@link org.apache.hadoop.fs.FileSystem}
      * @param table Table, see: {@link io.trino.plugin.hive.metastore.Table}
      * @param path  Path, see: {@link org.apache.hadoop.fs.Path}
-     * @return an iterator that runs over FileStatus-Object that inclues a file's block 
+     * @return an iterator that runs over FileStatus-Object that inclues a file's block
      * locations
      * @throws IOException
      * @throws RuntimeException
@@ -119,7 +122,7 @@ public class CachingDirectoryLister
         Future<RemoteIterator<LocatedFileStatus>> future = timeoutExecutorService
                 .submit(() -> listExecuter(fs, table, path));
         try {
-            return future.get(fileListingTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            return future.get(getFileListingTimeout().toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             // the thread is interrupted, throw a RuntimeException
             System.err.println(e);
@@ -140,13 +143,13 @@ public class CachingDirectoryLister
     }
 
     /**
-     * return an iterator over a collection whose elements need to be fetched 
-     * remotely. The elements are FileStatus-objects that includes a file's block 
-     * locations. 
+     * return an iterator over a collection whose elements need to be fetched
+     * remotely. The elements are FileStatus-objects that includes a file's block
+     * locations.
      * @param fs FileSystem, see: {@link org.apache.hadoop.fs.FileSystem}
      * @param table Table, see: {@link io.trino.plugin.hive.metastore.Table}
      * @param path  Path, see: {@link org.apache.hadoop.fs.Path}
-     * @return an iterator that runs over FileStatus-Object that inclues a file's block 
+     * @return an iterator that runs over FileStatus-Object that inclues a file's block
      * locations
      * @throws IOException
      */
