@@ -23,8 +23,7 @@ public class CachingTrinoS3FileSystem
     @Override
     public ClusterType getClusterType()
     {
-        return null;
-                //ClusterType.PRESTOSQL_CLUSTER_MANAGER;
+        return ClusterType.PRESTOSQL_CLUSTER_MANAGER;
     }
 
     @Override

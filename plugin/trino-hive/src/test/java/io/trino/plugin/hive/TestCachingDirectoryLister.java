@@ -16,28 +16,28 @@ package io.trino.plugin.hive;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.airlift.units.Duration;
-import io.trino.plugin.hive.metastore.Table;
+import io.trino.plugin.hive.metastore.*;
 import io.trino.plugin.hive.metastore.file.FileHiveMetastore;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.MaterializedRow;
 import io.trino.testing.QueryRunner;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.conf.Configuration;
-import org.junit.Assert;
-import org.junit.Rule;
-import org.junit.rules.Timeout;
+
 import org.testng.annotations.Test;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.concurrent.TimeUnit;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
 import static io.trino.plugin.hive.HiveQueryRunner.TPCH_SCHEMA;
 import static io.trino.plugin.hive.metastore.file.FileHiveMetastore.createTestingFileHiveMetastore;
+import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING_V1;
 import static java.lang.String.format;
 import static java.nio.file.Files.createTempDirectory;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,10 +70,36 @@ public class TestCachingDirectoryLister
     }
 
     // Function to get an existing table
-    private Table getTable(String schemaName, String tableName)
+    private Table getTable()
     {
-        return fileHiveMetastore.getTable(schemaName, tableName)
+        Column TABLE_COLUMN = new Column(
+                "column",
+                HiveType.HIVE_INT,
+                Optional.of("comment"));
+
+        Storage TABLE_STORAGE = new Storage(
+                StorageFormat.create("serde", "input", "output"),
+                Optional.of("location"),
+                Optional.of(new HiveBucketProperty(ImmutableList.of("column"), BUCKETING_V1, 10,
+                        ImmutableList.of(new SortingColumn("column", SortingColumn.Order.ASCENDING)))),
+                true,
+                ImmutableMap.of("param", "value2"));
+        return new Table(
+                "database",
+                "tableName",
+                Optional.of("owner"),
+                "table_type",
+                TABLE_STORAGE,
+                ImmutableList.of(TABLE_COLUMN),
+                ImmutableList.of(TABLE_COLUMN),
+                ImmutableMap.of("param", "value3"),
+                Optional.of("original_text"),
+                Optional.of("expanded_text"),
+                OptionalLong.empty());
+         /*return fileHiveMetastore.getTable(schemaName, tableName)
                 .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", schemaName, tableName)));
+
+          */
     }
 
     private void sleep(long milliseconds) {
@@ -96,7 +122,7 @@ public class TestCachingDirectoryLister
 
         Configuration conf = new Configuration();
         FileSystem fs = FileSystem.get(conf);
-        Table table = getTable(TPCH_SCHEMA,"partial_cache_invalidation_table1");
+        Table table = getTable();
         Path path = createTempDirectory(null);
 
         cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
@@ -111,7 +137,7 @@ public class TestCachingDirectoryLister
         try{
             Configuration conf = new Configuration();
             FileSystem fs = FileSystem.get(conf);
-            Table table = getTable(TPCH_SCHEMA,"partial_cache_invalidation_table1");
+            Table table = getTable();
             Path path = createTempDirectory(null);
 
             cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
