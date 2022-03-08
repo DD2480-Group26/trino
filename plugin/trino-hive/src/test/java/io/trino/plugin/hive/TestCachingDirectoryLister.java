@@ -23,6 +23,7 @@ import io.trino.testing.MaterializedRow;
 import io.trino.testing.QueryRunner;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.conf.Configuration;
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.rules.Timeout;
 import org.testng.annotations.Test;
@@ -40,6 +41,7 @@ import static io.trino.plugin.hive.metastore.file.FileHiveMetastore.createTestin
 import static java.lang.String.format;
 import static java.nio.file.Files.createTempDirectory;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.testng.AssertJUnit.fail;
 
 // some tests may invalidate the whole cache affecting therefore other concurrent tests
@@ -49,9 +51,6 @@ public class TestCachingDirectoryLister
 {
     private CachingDirectoryLister cachingDirectoryLister;
     private FileHiveMetastore fileHiveMetastore;
-
-    @Rule
-    public Timeout timeout = new Timeout(1, TimeUnit.MINUTES);
 
     @Override
     protected QueryRunner createQueryRunner()
@@ -70,6 +69,7 @@ public class TestCachingDirectoryLister
                 .build();
     }
 
+    // Function to get an existing table
     private Table getTable(String schemaName, String tableName)
     {
         return fileHiveMetastore.getTable(schemaName, tableName)
@@ -84,18 +84,12 @@ public class TestCachingDirectoryLister
         }
     }
 
-    @Test(timeOut = 500)
-    public void testList_shouldNotTimeout() throws IOException {
-        sleep(500);
-
-        Configuration conf = new Configuration();
-        FileSystem fs = FileSystem.get(conf);
-        Table table = getTable(TPCH_SCHEMA,"partial_cache_invalidation_table1");
-        Path path = createTempDirectory(null);
-
-       cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
-    }
-
+    /**
+     * Set timeouts for unit tests using JUnit
+     * The @Test annotation which has the timeout attribute expecting a value in milliseconds
+     * If the test method doesn't complete in the given time limit, JUnit will throw an exception (TestTimedOutException )
+     * @throws IOException
+     */
     @Test(timeOut = 1500)
     public void testList_shouldTimeout() throws IOException {
         sleep(1500);
@@ -106,6 +100,27 @@ public class TestCachingDirectoryLister
         Path path = createTempDirectory(null);
 
         cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
+    }
+
+    /**
+     * Test case to catch the timeOut exception in the CachingDirectoryLister.list if it occurs
+     */
+    @Test
+    public void testList_catchException(){
+        Exception exp = null;
+        try{
+            Configuration conf = new Configuration();
+            FileSystem fs = FileSystem.get(conf);
+            Table table = getTable(TPCH_SCHEMA,"partial_cache_invalidation_table1");
+            Path path = createTempDirectory(null);
+
+            cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
+
+        } catch (Exception e){
+            exp = e;
+        }
+        assertThat(exp).isNull();
+
     }
 
     @Test
