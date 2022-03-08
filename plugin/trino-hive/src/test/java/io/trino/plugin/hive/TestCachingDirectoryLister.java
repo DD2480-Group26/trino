@@ -123,9 +123,9 @@ public class TestCachingDirectoryLister
         Configuration conf = new Configuration();
         FileSystem fs = FileSystem.get(conf);
         Table table = getTable();
-        Path path = createTempDirectory(null);
+        //Path path = createTempDirectory(null);
 
-        cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
+        cachingDirectoryLister.list(fs,table, new org.apache.hadoop.fs.Path("parent", "child"));
     }
 
     /**
@@ -138,9 +138,9 @@ public class TestCachingDirectoryLister
             Configuration conf = new Configuration();
             FileSystem fs = FileSystem.get(conf);
             Table table = getTable();
-            Path path = createTempDirectory(null);
+            //Path path = createTempDirectory(null);
 
-            cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
+            cachingDirectoryLister.list(fs,table, new org.apache.hadoop.fs.Path("parent", "child"));
 
         } catch (Exception e){
             exp = e;
