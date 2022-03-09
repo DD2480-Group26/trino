@@ -16,27 +16,27 @@ package io.trino.plugin.hive;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.airlift.units.Duration;
-import io.trino.plugin.hive.metastore.Table;
+import io.trino.plugin.hive.metastore.*;
 import io.trino.plugin.hive.metastore.file.FileHiveMetastore;
 import io.trino.testing.AbstractTestQueryFramework;
 import io.trino.testing.MaterializedRow;
 import io.trino.testing.QueryRunner;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.conf.Configuration;
-import org.junit.Rule;
-import org.junit.rules.Timeout;
+
 import org.testng.annotations.Test;
 
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.concurrent.TimeUnit;
+import java.util.Optional;
+import java.util.OptionalLong;
 
 import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
 import static io.trino.plugin.hive.HiveQueryRunner.TPCH_SCHEMA;
 import static io.trino.plugin.hive.metastore.file.FileHiveMetastore.createTestingFileHiveMetastore;
+import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING_V1;
 import static java.lang.String.format;
 import static java.nio.file.Files.createTempDirectory;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,18 +45,13 @@ import static org.testng.AssertJUnit.fail;
 // some tests may invalidate the whole cache affecting therefore other concurrent tests
 @Test(singleThreaded = true)
 public class TestCachingDirectoryLister
-        extends AbstractTestQueryFramework
-{
+        extends AbstractTestQueryFramework {
     private CachingDirectoryLister cachingDirectoryLister;
     private FileHiveMetastore fileHiveMetastore;
 
-    @Rule
-    public Timeout timeout = new Timeout(1, TimeUnit.MINUTES);
-
     @Override
     protected QueryRunner createQueryRunner()
-            throws Exception
-    {
+            throws Exception {
         Path temporaryMetastoreDirectory = createTempDirectory(null);
         closeAfterClass(() -> deleteRecursively(temporaryMetastoreDirectory, ALLOW_INSECURE));
 
@@ -70,47 +65,64 @@ public class TestCachingDirectoryLister
                 .build();
     }
 
-    private Table getTable(String schemaName, String tableName)
-    {
-        return fileHiveMetastore.getTable(schemaName, tableName)
-                .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", schemaName, tableName)));
+    // Function to get an existing table
+    private Table getTable() {
+        Column TABLE_COLUMN = new Column(
+                "column",
+                HiveType.HIVE_INT,
+                Optional.of("comment"));
+
+        Storage TABLE_STORAGE = new Storage(
+                StorageFormat.create("serde", "input", "output"),
+                Optional.of("location"),
+                Optional.of(new HiveBucketProperty(ImmutableList.of("column"), BUCKETING_V1, 10,
+                        ImmutableList.of(new SortingColumn("column", SortingColumn.Order.ASCENDING)))),
+                true,
+                ImmutableMap.of("param", "value2"));
+        return new Table(
+                "database",
+                "tableName",
+                Optional.of("owner"),
+                "table_type",
+                TABLE_STORAGE,
+                ImmutableList.of(TABLE_COLUMN),
+                ImmutableList.of(TABLE_COLUMN),
+                ImmutableMap.of("param", "value3"),
+                Optional.of("original_text"),
+                Optional.of("expanded_text"),
+                OptionalLong.empty());
     }
 
-    private void sleep(long milliseconds) {
+    /**
+     * Test case to catch the timeOut exception in the CachingDirectoryLister.list if it occurs
+     */
+    @Test
+    public void testList_catchException() {
+        Exception exp = null;
         try {
-            Thread.sleep(milliseconds);
-        } catch (InterruptedException e) {
-            fail();
+            assertUpdate("CREATE TABLE partial_cache_invalidation_table1 (col1 int) WITH (format = 'ORC')");
+            assertUpdate("INSERT INTO partial_cache_invalidation_table1 VALUES (1), (2), (3)", 3);
+            // The listing for the invalidate_non_partitioned_table1 should be in the directory cache after this call
+            assertQuery("SELECT sum(col1) FROM partial_cache_invalidation_table1", "VALUES (6)");
+
+            Configuration conf = new Configuration();
+            FileSystem fs = FileSystem.get(conf);
+            Table table = fileHiveMetastore.getTable(TPCH_SCHEMA, "partial_cache_invalidation_table1")
+                    .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", TPCH_SCHEMA, "partial_cache_invalidation_table1")));
+
+            org.apache.hadoop.fs.Path path = getTableLocation(TPCH_SCHEMA, "partial_cache_invalidation_table1");
+
+            cachingDirectoryLister.list(fs, table, path);
+
+        } catch (Exception e) {
+            exp = e;
         }
-    }
+        assertThat(exp).isNull();
 
-    @Test(timeOut = 500)
-    public void testList_shouldNotTimeout() throws IOException {
-        sleep(500);
-
-        Configuration conf = new Configuration();
-        FileSystem fs = FileSystem.get(conf);
-        Table table = getTable(TPCH_SCHEMA,"partial_cache_invalidation_table1");
-        Path path = createTempDirectory(null);
-
-       cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
-    }
-
-    @Test(timeOut = 1500)
-    public void testList_shouldTimeout() throws IOException {
-        sleep(1500);
-
-        Configuration conf = new Configuration();
-        FileSystem fs = FileSystem.get(conf);
-        Table table = getTable(TPCH_SCHEMA,"partial_cache_invalidation_table1");
-        Path path = createTempDirectory(null);
-
-        cachingDirectoryLister.list(fs,table, (org.apache.hadoop.fs.Path) path);
     }
 
     @Test
-    public void testCacheInvalidationIsAppliedSpecificallyOnTheNonPartitionedTableBeingChanged()
-    {
+    public void testCacheInvalidationIsAppliedSpecificallyOnTheNonPartitionedTableBeingChanged() {
         assertUpdate("CREATE TABLE partial_cache_invalidation_table1 (col1 int) WITH (format = 'ORC')");
         assertUpdate("INSERT INTO partial_cache_invalidation_table1 VALUES (1), (2), (3)", 3);
         // The listing for the invalidate_non_partitioned_table1 should be in the directory cache after this call
@@ -138,8 +150,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testCacheInvalidationIsAppliedOnTheEntireCacheOnPartitionedTableDrop()
-    {
+    public void testCacheInvalidationIsAppliedOnTheEntireCacheOnPartitionedTableDrop() {
         assertUpdate("CREATE TABLE full_cache_invalidation_non_partitioned_table (col1 int) WITH (format = 'ORC')");
         assertUpdate("INSERT INTO full_cache_invalidation_non_partitioned_table VALUES (1), (2), (3)", 3);
         // The listing for the invalidate_non_partitioned_table1 should be in the directory cache after this call
@@ -173,8 +184,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testCacheInvalidationIsAppliedSpecificallyOnPartitionDropped()
-    {
+    public void testCacheInvalidationIsAppliedSpecificallyOnPartitionDropped() {
         assertUpdate("CREATE TABLE partition_path_cache_invalidation_non_partitioned_table (col1 int) WITH (format = 'ORC')");
         assertUpdate("INSERT INTO partition_path_cache_invalidation_non_partitioned_table VALUES (1), (2), (3)", 3);
         // The listing for the invalidate_non_partitioned_table1 should be in the directory cache after this call
@@ -203,8 +213,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testInsertIntoNonPartitionedTable()
-    {
+    public void testInsertIntoNonPartitionedTable() {
         assertUpdate("CREATE TABLE insert_into_non_partitioned_table (col1 int) WITH (format = 'ORC')");
         assertUpdate("INSERT INTO insert_into_non_partitioned_table VALUES (1), (2), (3)", 3);
         // The listing for the table should be in the directory cache after this call
@@ -220,8 +229,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testInsertIntoPartitionedTable()
-    {
+    public void testInsertIntoPartitionedTable() {
         assertUpdate("CREATE TABLE insert_into_partitioned_table (col1 int, col2 varchar) WITH (format = 'ORC', partitioned_by = ARRAY['col2'])");
         assertUpdate("INSERT INTO insert_into_partitioned_table VALUES (1, 'group1'), (2, 'group1'), (3, 'group2'), (4, 'group2')", 4);
         // The listing for the table partitions should be in the directory cache after this call
@@ -241,8 +249,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testDropPartition()
-    {
+    public void testDropPartition() {
         assertUpdate("CREATE TABLE delete_from_partitioned_table (col1 int, col2 varchar) WITH (format = 'ORC', partitioned_by = ARRAY['col2'])");
         assertUpdate("INSERT INTO delete_from_partitioned_table VALUES (1, 'group1'), (2, 'group1'), (3, 'group2'), (4, 'group2'), (5, 'group3')", 5);
         // The listing for the table partitions should be in the directory cache after this call
@@ -263,8 +270,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testDropMultiLevelPartition()
-    {
+    public void testDropMultiLevelPartition() {
         assertUpdate("CREATE TABLE delete_from_partitioned_table (clicks bigint, day date, country varchar) WITH (format = 'ORC', partitioned_by = ARRAY['day', 'country'])");
         assertUpdate("INSERT INTO delete_from_partitioned_table VALUES (1000, DATE '2022-02-01', 'US'), (2000, DATE '2022-02-01', 'US'), (4000, DATE '2022-02-02', 'US'), (1500, DATE '2022-02-01', 'AT'), (2500, DATE '2022-02-02', 'AT')", 5);
         // The listing for the table partitions should be in the directory cache after this call
@@ -292,8 +298,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testUnregisterRegisterPartition()
-    {
+    public void testUnregisterRegisterPartition() {
         assertUpdate("CREATE TABLE register_unregister_partition_table (col1 int, col2 varchar) WITH (format = 'ORC', partitioned_by = ARRAY['col2'])");
         assertUpdate("INSERT INTO register_unregister_partition_table VALUES (1, 'group1'), (2, 'group1'), (3, 'group2'), (4, 'group2')", 4);
         // The listing for the table partitions should be in the directory cache after this call
@@ -324,8 +329,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testRenameTable()
-    {
+    public void testRenameTable() {
         assertUpdate("CREATE TABLE table_to_be_renamed (col1 int) WITH (format = 'ORC')");
         assertUpdate("INSERT INTO table_to_be_renamed VALUES (1), (2), (3)", 3);
         // The listing for the table should be in the directory cache after this call
@@ -340,8 +344,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testDropTable()
-    {
+    public void testDropTable() {
         assertUpdate("CREATE TABLE table_to_be_dropped (col1 int) WITH (format = 'ORC')");
         assertUpdate("INSERT INTO table_to_be_dropped VALUES (1), (2), (3)", 3);
         // The listing for the table should be in the directory cache after this call
@@ -354,8 +357,7 @@ public class TestCachingDirectoryLister
     }
 
     @Test
-    public void testDropPartitionedTable()
-    {
+    public void testDropPartitionedTable() {
         assertUpdate("CREATE TABLE drop_partitioned_table (col1 int, col2 varchar) WITH (format = 'ORC', partitioned_by = ARRAY['col2'])");
         assertUpdate("INSERT INTO drop_partitioned_table VALUES (1, 'group1'), (2, 'group1'), (3, 'group2'), (4, 'group2'), (5, 'group3')", 5);
         // The listing for the table partitions should be in the directory cache after this call
@@ -372,16 +374,14 @@ public class TestCachingDirectoryLister
         assertThat(cachingDirectoryLister.isCached(tableGroup3PartitionLocation)).isFalse();
     }
 
-    private org.apache.hadoop.fs.Path getTableLocation(String schemaName, String tableName)
-    {
+    private org.apache.hadoop.fs.Path getTableLocation(String schemaName, String tableName) {
         return fileHiveMetastore.getTable(schemaName, tableName)
                 .map(table -> table.getStorage().getLocation())
                 .map(tableLocation -> new org.apache.hadoop.fs.Path(tableLocation))
                 .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", schemaName, tableName)));
     }
 
-    private org.apache.hadoop.fs.Path getPartitionLocation(String schemaName, String tableName, List<String> partitionValues)
-    {
+    private org.apache.hadoop.fs.Path getPartitionLocation(String schemaName, String tableName, List<String> partitionValues) {
         Table table = fileHiveMetastore.getTable(schemaName, tableName)
                 .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", schemaName, tableName)));
 
