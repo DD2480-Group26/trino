@@ -117,23 +117,34 @@ public class TestCachingDirectoryLister
      * @throws IOException
      */
     @Test(timeOut = 60000)
-    public void testList_shouldTimeout() throws IOException, InterruptedException {
+    public void testList_shouldTimeout() throws InterruptedException, IOException {
         TimeUnit.MINUTES.sleep(1);
         //sleep(60000);
-        assertUpdate("CREATE TABLE partial_cache_invalidation_table1 (col1 int) WITH (format = 'ORC')");
-        assertUpdate("INSERT INTO partial_cache_invalidation_table1 VALUES (1), (2), (3)", 3);
-        // The listing for the invalidate_non_partitioned_table1 should be in the directory cache after this call
-        assertQuery("SELECT sum(col1) FROM partial_cache_invalidation_table1", "VALUES (6)");
-
+        Exception exp = null;
         Configuration conf = new Configuration();
         FileSystem fs = FileSystem.get(conf);
-        //Table table = getTable();
-        Table table = fileHiveMetastore.getTable(TPCH_SCHEMA, "partial_cache_invalidation_table1")
-                .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", TPCH_SCHEMA, "partial_cache_invalidation_table1")));
 
-        org.apache.hadoop.fs.Path path = getTableLocation(TPCH_SCHEMA, "partial_cache_invalidation_table1");
+        try{
+            assertUpdate("CREATE TABLE partial_cache_invalidation_table1 (col1 int) WITH (format = 'ORC')");
+            assertUpdate("INSERT INTO partial_cache_invalidation_table1 VALUES (1), (2), (3)", 3);
+            // The listing for the invalidate_non_partitioned_table1 should be in the directory cache after this call
+            assertQuery("SELECT sum(col1) FROM partial_cache_invalidation_table1", "VALUES (6)");
 
-        cachingDirectoryLister.list(fs,table, path);
+
+            //Table table = getTable();
+            Table table = fileHiveMetastore.getTable(TPCH_SCHEMA, "partial_cache_invalidation_table1")
+                    .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", TPCH_SCHEMA, "partial_cache_invalidation_table1")));
+
+            org.apache.hadoop.fs.Path path = getTableLocation(TPCH_SCHEMA, "partial_cache_invalidation_table1");
+
+            cachingDirectoryLister.list(fs,table, path);
+
+        } catch (Exception e){
+            exp = e;
+        }
+
+
+        assertThat(exp).isNotNull();
 
     }
 
