@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.concurrent.TimeUnit;
 
 import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
@@ -41,7 +42,6 @@ import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING
 import static java.lang.String.format;
 import static java.nio.file.Files.createTempDirectory;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.testng.AssertJUnit.fail;
 
 // some tests may invalidate the whole cache affecting therefore other concurrent tests
@@ -116,16 +116,21 @@ public class TestCachingDirectoryLister
      * If the test method doesn't complete in the given time limit, JUnit will throw an exception (TestTimedOutException )
      * @throws IOException
      */
-    @Test(timeOut = 1500)
-    public void testList_shouldTimeout() throws IOException {
-        sleep(1500);
+    @Test(timeOut = 60000)
+    public void testList_shouldTimeout() throws IOException, InterruptedException {
+        TimeUnit.MINUTES.sleep(1);
+        //sleep(60000);
 
         Configuration conf = new Configuration();
         FileSystem fs = FileSystem.get(conf);
-        Table table = getTable();
-        //Path path = createTempDirectory(null);
+        //Table table = getTable();
+        Table table = fileHiveMetastore.getTable(TPCH_SCHEMA, "partial_cache_invalidation_table1")
+                .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", TPCH_SCHEMA, "partial_cache_invalidation_table1")));
 
-        cachingDirectoryLister.list(fs,table, new org.apache.hadoop.fs.Path(".", ""));
+        org.apache.hadoop.fs.Path path = getTableLocation(TPCH_SCHEMA, "partial_cache_invalidation_table1");
+
+        cachingDirectoryLister.list(fs,table, path);
+
     }
 
     /**
@@ -137,10 +142,13 @@ public class TestCachingDirectoryLister
         try{
             Configuration conf = new Configuration();
             FileSystem fs = FileSystem.get(conf);
-            Table table = getTable();
-            //Path path = createTempDirectory(null);
+            //Table table = getTable();
+            Table table = fileHiveMetastore.getTable(TPCH_SCHEMA, "partial_cache_invalidation_table1")
+                    .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", TPCH_SCHEMA, "partial_cache_invalidation_table1")));
 
-            cachingDirectoryLister.list(fs,table, new org.apache.hadoop.fs.Path(".", ""));
+            org.apache.hadoop.fs.Path path = getTableLocation(TPCH_SCHEMA, "partial_cache_invalidation_table1");
+
+            cachingDirectoryLister.list(fs,table, path);
 
         } catch (Exception e){
             exp = e;
