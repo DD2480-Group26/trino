@@ -13,25 +13,6 @@
  */
 package io.trino.plugin.hive;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import io.airlift.units.Duration;
-import io.trino.plugin.hive.metastore.*;
-import io.trino.plugin.hive.metastore.file.FileHiveMetastore;
-import io.trino.testing.AbstractTestQueryFramework;
-import io.trino.testing.MaterializedRow;
-import io.trino.testing.QueryRunner;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.conf.Configuration;
-
-import org.testng.annotations.Test;
-
-import java.nio.file.Path;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.Optional;
-import java.util.OptionalLong;
-
 import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
 import static io.trino.plugin.hive.HiveQueryRunner.TPCH_SCHEMA;
@@ -40,7 +21,32 @@ import static io.trino.plugin.hive.util.HiveBucketing.BucketingVersion.BUCKETING
 import static java.lang.String.format;
 import static java.nio.file.Files.createTempDirectory;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.testng.AssertJUnit.fail;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.concurrent.TimeUnit;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.testng.annotations.Test;
+
+import io.airlift.units.Duration;
+import io.trino.plugin.hive.metastore.Column;
+import io.trino.plugin.hive.metastore.SortingColumn;
+import io.trino.plugin.hive.metastore.Storage;
+import io.trino.plugin.hive.metastore.StorageFormat;
+import io.trino.plugin.hive.metastore.Table;
+import io.trino.plugin.hive.metastore.file.FileHiveMetastore;
+import io.trino.testing.AbstractTestQueryFramework;
+import io.trino.testing.MaterializedRow;
+import io.trino.testing.QueryRunner;
 
 // some tests may invalidate the whole cache affecting therefore other concurrent tests
 @Test(singleThreaded = true)
@@ -91,6 +97,44 @@ public class TestCachingDirectoryLister
                 Optional.of("original_text"),
                 Optional.of("expanded_text"),
                 OptionalLong.empty());
+    }
+
+    /**
+    * Set timeouts for unit tests using JUnit
+    * The @Test annotation which has the timeout attribute expecting a value in milliseconds
+    * If the test method doesn't complete in the given time limit, JUnit will throw an exception (TestTimedOutException )
+    * @throws IOException
+    */
+    @Test(timeOut = 60000)
+    public void testList_shouldTimeout() throws InterruptedException, IOException {
+        TimeUnit.MINUTES.sleep(1);
+        //sleep(60000);
+        Exception exp = null;
+        Configuration conf = new Configuration();
+        FileSystem fs = FileSystem.get(conf);
+
+        try{
+            assertUpdate("CREATE TABLE partial_cache_invalidation_table1 (col1 int) WITH (format = 'ORC')");
+            assertUpdate("INSERT INTO partial_cache_invalidation_table1 VALUES (1), (2), (3)", 3);
+            // The listing for the invalidate_non_partitioned_table1 should be in the directory cache after this call
+            assertQuery("SELECT sum(col1) FROM partial_cache_invalidation_table1", "VALUES (6)");
+
+
+            //Table table = getTable();
+            Table table = fileHiveMetastore.getTable(TPCH_SCHEMA, "partial_cache_invalidation_table1")
+                    .orElseThrow(() -> new NoSuchElementException(format("The table %s.%s could not be found", TPCH_SCHEMA, "partial_cache_invalidation_table1")));
+
+            org.apache.hadoop.fs.Path path = getTableLocation(TPCH_SCHEMA, "partial_cache_invalidation_table1");
+
+            cachingDirectoryLister.list(fs,table, path);
+
+        } catch (Exception e){
+            exp = e;
+        }
+
+
+        assertThat(exp).isNotNull();
+
     }
 
     /**
