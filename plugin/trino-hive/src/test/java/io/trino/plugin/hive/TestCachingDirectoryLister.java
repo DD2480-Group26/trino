@@ -120,6 +120,10 @@ public class TestCachingDirectoryLister
     public void testList_shouldTimeout() throws IOException, InterruptedException {
         TimeUnit.MINUTES.sleep(1);
         //sleep(60000);
+        assertUpdate("CREATE TABLE partial_cache_invalidation_table1 (col1 int) WITH (format = 'ORC')");
+        assertUpdate("INSERT INTO partial_cache_invalidation_table1 VALUES (1), (2), (3)", 3);
+        // The listing for the invalidate_non_partitioned_table1 should be in the directory cache after this call
+        assertQuery("SELECT sum(col1) FROM partial_cache_invalidation_table1", "VALUES (6)");
 
         Configuration conf = new Configuration();
         FileSystem fs = FileSystem.get(conf);
@@ -140,6 +144,11 @@ public class TestCachingDirectoryLister
     public void testList_catchException(){
         Exception exp = null;
         try{
+            assertUpdate("CREATE TABLE partial_cache_invalidation_table1 (col1 int) WITH (format = 'ORC')");
+            assertUpdate("INSERT INTO partial_cache_invalidation_table1 VALUES (1), (2), (3)", 3);
+            // The listing for the invalidate_non_partitioned_table1 should be in the directory cache after this call
+            assertQuery("SELECT sum(col1) FROM partial_cache_invalidation_table1", "VALUES (6)");
+
             Configuration conf = new Configuration();
             FileSystem fs = FileSystem.get(conf);
             //Table table = getTable();
